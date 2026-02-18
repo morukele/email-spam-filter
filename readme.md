@@ -4,6 +4,8 @@ A recreational exploration of Naive Bayes Classifier for email spam filter using
 
 Inspired by Tsoding Daily's [video](https://www.youtube.com/watch?v=JsfOXk7qmSM) video on the subject.
 
+> I am using boost library to access standard algorithms.
+
 ## Naive Bayes Probability Theory
 The general probability formula is give as:
 
