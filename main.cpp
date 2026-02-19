@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -7,14 +8,14 @@
 #include <unordered_map>
 
 /**
- * A function to read the contents of a .txt file into a string given a file path.
+ * A function to read the contents of a .txt file into a string given a file
+ * path.
  * @param path path to file to read
  * @return string containing content of file
  */
 std::string readFile(const std::filesystem::path& path)
 {
     std::ifstream file{path};
-    // check if file is opened properly
     if (!file.is_open())
     {
         throw std::runtime_error("Failed to open file: " + path.string());
@@ -38,17 +39,21 @@ std::vector<std::string> tokenize(const std::string& s)
 
     while (iss >> token)
     {
+        std::ranges::transform(token, token.begin(), [](const unsigned char c) { return std::toupper(c); });
         tokens.push_back(token);
     }
 
     return tokens;
 }
 
-int main()
+/**
+ * A function to add the contents of a file into a bag of wards.
+ * @param path path to txt file to read
+ * @param bagOfWords Hashmap to add words into
+ */
+void addFileToBag(const std::filesystem::path& path, std::unordered_map<std::string, int>& bagOfWords)
 {
-    const std::filesystem::path path{"./enron1/ham/0002.1999-12-13.farmer.ham.txt"};
-    std::string content; // NOTE: file is read properly but printing doesn't show all contents of the file
-
+    std::string content;
     try
     {
         content = readFile(path);
@@ -59,21 +64,117 @@ int main()
     }
 
     std::vector<std::string> tokens = tokenize(content);
-    std::unordered_map<std::string, int> freqs;
-    const size_t totalCount = tokens.size(); // better to take the size here
 
     for (std::string& token : tokens)
     {
-        std::ranges::transform(token, token.begin(),
-            [](const unsigned char c) { return std::toupper(c); });
-        freqs[token] += 1;
+        bagOfWords[token] += 1;
+    }
+}
+
+/**
+ * A function to add the contents of all txt files in a directory into a bag of words.
+ * @param dir directory containing the files
+ * @param bagOfWords Hashmap to add words into
+ */
+void addDirectoryToBagOfWords(const std::filesystem::path& dir, std::unordered_map<std::string, int>& bagOfWords)
+{
+    for (auto itEntry = std::filesystem::recursive_directory_iterator(dir);
+         itEntry != std::filesystem::recursive_directory_iterator(); ++itEntry)
+    {
+        if (!itEntry->is_directory())
+        {
+            addFileToBag(itEntry->path(), bagOfWords);
+        }
+    }
+}
+
+int totalCount(const std::unordered_map<std::string, int>& bagOfWords)
+{
+    int count = 0;
+    for (const auto& token : bagOfWords)
+    {
+        count += token.second;
+    }
+    return count;
+}
+
+std::pair<double, double> classifyFile(const std::filesystem::path& filePath,
+                                       std::unordered_map<std::string, int>& hamBOW, const double& hamTotalCount,
+                                       std::unordered_map<std::string, int>& spamBOW, const double& spamTotalCount,
+                                       const double& totalCountOfBags)
+{
+    std::unordered_map<std::string, int> fileBOW;
+    addFileToBag(filePath, fileBOW);
+
+    double dp = 0.0;
+    double hamDp = 0.0;
+    double spamDp = 0.0;
+    const double hamP = std::log(hamTotalCount / totalCountOfBags);
+    const double spamP = std::log(spamTotalCount / totalCountOfBags);
+
+    for (auto& key : fileBOW | std::views::keys)
+    {
+        if (spamBOW[key] != 0)
+        {
+            spamDp += std::log(static_cast<double>(spamBOW[key]) / spamTotalCount);
+        }
+        if (hamBOW[key] != 0)
+        {
+            hamDp += std::log(static_cast<double>(hamBOW[key]) / hamTotalCount);
+        }
+        const double n = spamBOW[key] + hamBOW[key];
+        if (n != 0)
+        {
+            dp += std::log(n / totalCountOfBags);
+        }
+    }
+    double spam = spamDp + spamP - dp;
+    double ham = hamDp + hamP - dp;
+
+    return std::pair{spam, ham};
+}
+
+int main()
+{
+    const std::filesystem::path hamDir{"./enron1/ham"};
+    std::unordered_map<std::string, int> hamBOW;
+    addDirectoryToBagOfWords(hamDir, hamBOW);
+
+    const std::filesystem::path spamDir{"./enron1/spam"};
+    std::unordered_map<std::string, int> spamBOW;
+    addDirectoryToBagOfWords(spamDir, spamBOW);
+
+    const auto hamTotalCount = static_cast<double>(totalCount(hamBOW));
+    const auto spamTotalCount = static_cast<double>(totalCount(spamBOW));
+    double totalCountOfBags = hamTotalCount + spamTotalCount;
+
+    // walk through the test directory
+    std::filesystem::path testHamDir{"enron2/ham"};
+    int hamOutcomeCount = 0;
+    int spamOutcomeCount = 0;
+
+    for (auto itEntry = std::filesystem::recursive_directory_iterator(testHamDir);
+         itEntry != std::filesystem::recursive_directory_iterator(); ++itEntry)
+    {
+        // if it is a file, classify it
+        if (!itEntry->is_directory())
+        {
+            auto [spamP, hamP] =
+                classifyFile(itEntry->path(), hamBOW, hamTotalCount, spamBOW, spamTotalCount, totalCountOfBags);
+
+            if (spamP > hamP)
+            {
+                spamOutcomeCount++;
+            }
+            else
+            {
+                hamOutcomeCount++;
+            }
+        }
     }
 
-    for (auto& [key, value] : freqs)
-    {
-        std::cout << "|" << key << "|" << " => " << static_cast<double>(value) / static_cast<double>(totalCount)
-                  << '\n';
-    }
+    std::cout << "HAM COUNT: " << hamOutcomeCount << '\n';
+    std::cout << "SPAM COUNT: " << spamOutcomeCount << '\n';
 
     return 0;
 }
