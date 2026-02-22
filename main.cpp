@@ -7,6 +7,9 @@
 #include <sstream>
 #include <unordered_map>
 
+constexpr int THRESHOLD = 300;
+
+
 /**
  * A function to read the contents of a .txt file into a string given a file
  * path.
@@ -88,12 +91,16 @@ void addDirectoryToBagOfWords(const std::filesystem::path& dir, std::unordered_m
     }
 }
 
-int totalCount(const std::unordered_map<std::string, int>& bagOfWords)
+int totalCount(std::unordered_map<std::string, int>& bagOfWords)
 {
     int count = 0;
-    for (const auto& token : bagOfWords)
+    for (const auto& [key, value] : bagOfWords)
     {
-        count += token.second;
+        if (const int f = bagOfWords[key]; f < THRESHOLD)
+        {
+            continue;
+        }
+        count += value;
     }
     return count;
 }
@@ -114,6 +121,12 @@ std::pair<double, double> classifyFile(const std::filesystem::path& filePath,
 
     for (auto& key : fileBOW | std::views::keys)
     {
+        const double n = spamBOW[key] + hamBOW[key];
+        if (n < THRESHOLD)
+        {
+            continue;
+        }
+
         if (spamBOW[key] != 0)
         {
             spamDp += std::log(static_cast<double>(spamBOW[key]) / spamTotalCount);
@@ -122,7 +135,6 @@ std::pair<double, double> classifyFile(const std::filesystem::path& filePath,
         {
             hamDp += std::log(static_cast<double>(hamBOW[key]) / hamTotalCount);
         }
-        const double n = spamBOW[key] + hamBOW[key];
         if (n != 0)
         {
             dp += std::log(n / totalCountOfBags);
@@ -134,26 +146,14 @@ std::pair<double, double> classifyFile(const std::filesystem::path& filePath,
     return std::pair{spam, ham};
 }
 
-int main()
+std::pair<int, int> classifyDir(const std::filesystem::path& dirPath, std::unordered_map<std::string, int>& hamBOW,
+                                std::unordered_map<std::string, int>& spamBOW, const double& hamTotalCount,
+                                const double& spamTotalCount, const double& totalCountOfBags)
 {
-    const std::filesystem::path hamDir{"./enron1/ham"};
-    std::unordered_map<std::string, int> hamBOW;
-    addDirectoryToBagOfWords(hamDir, hamBOW);
-
-    const std::filesystem::path spamDir{"./enron1/spam"};
-    std::unordered_map<std::string, int> spamBOW;
-    addDirectoryToBagOfWords(spamDir, spamBOW);
-
-    const auto hamTotalCount = static_cast<double>(totalCount(hamBOW));
-    const auto spamTotalCount = static_cast<double>(totalCount(spamBOW));
-    double totalCountOfBags = hamTotalCount + spamTotalCount;
-
-    // walk through the test directory
-    std::filesystem::path testHamDir{"enron2/ham"};
     int hamOutcomeCount = 0;
     int spamOutcomeCount = 0;
 
-    for (auto itEntry = std::filesystem::recursive_directory_iterator(testHamDir);
+    for (auto itEntry = std::filesystem::recursive_directory_iterator(dirPath);
          itEntry != std::filesystem::recursive_directory_iterator(); ++itEntry)
     {
         // if it is a file, classify it
@@ -173,8 +173,43 @@ int main()
         }
     }
 
-    std::cout << "HAM COUNT: " << hamOutcomeCount << '\n';
-    std::cout << "SPAM COUNT: " << spamOutcomeCount << '\n';
+    return std::pair{spamOutcomeCount, hamOutcomeCount};
+}
+
+int main()
+{
+    std::cout << "Training..." << '\n';
+    std::unordered_map<std::string, int> hamBOW;
+    std::unordered_map<std::string, int> spamBOW;
+    for (int i{1}; i <= 5; i++)
+    {
+        const std::filesystem::path hamDir{"./enron" + std::to_string(i) + "/ham"};
+        addDirectoryToBagOfWords(hamDir, hamBOW);
+
+        const std::filesystem::path spamDir{"./enron" + std::to_string(i) + "/spam"};
+        addDirectoryToBagOfWords(spamDir, spamBOW);
+    }
+
+    const auto hamTotalCount = static_cast<double>(totalCount(hamBOW));
+    const auto spamTotalCount = static_cast<double>(totalCount(spamBOW));
+    double totalCountOfBags = hamTotalCount + spamTotalCount;
+
+    std::cout << "Classifying ham..." << '\n';
+
+    std::filesystem::path testHamDir{"enron6/ham"};
+    auto [spamOutcomeCount, hamOutcomeCount] =
+        classifyDir(testHamDir, hamBOW, spamBOW, hamTotalCount, spamTotalCount, totalCountOfBags);
+
+    std::cout << '\t' << "SPAM COUNT    = " << spamOutcomeCount << '\n';
+    std::cout << '\t' << "HAM COUNT     = " << hamOutcomeCount << '\n';
+
+    std::cout << "Classifying spam..." << '\n';
+    std::filesystem::path testSpamDir{"enron6/spam"};
+    auto [spamOutcomeCount2, hamOutcomeCount2] =
+        classifyDir(testSpamDir, hamBOW, spamBOW, hamTotalCount, spamTotalCount, totalCountOfBags);
+
+    std::cout << '\t' << "SPAM COUNT    = " << spamOutcomeCount2 << '\n';
+    std::cout << '\t' << "HAM COUNT     = " << hamOutcomeCount2 << '\n';
 
     return 0;
 }
